@@ -3,11 +3,11 @@ import pyomo.environ as pyo
 
 # Example tasks data (task_id, duration, reward)
 tasks_data = {
-    1: {'duration': 3, 'reward': 10, 'dependencies': [5]},
+    1: {'duration': 4, 'reward': 10},
     2: {'duration': 3, 'reward': 15},
     3: {'duration': 5, 'reward': 7},
     4: {'duration': 7, 'reward': 7},
-    5: {'duration': 1, 'reward': 20},
+    5: {'duration': 3, 'reward': 20},
 }
 
 # Define the model
@@ -21,12 +21,11 @@ model.schedule = Var(model.tasks, within=pyo.Binary)
 
 # Define available hours, excluding unavailable time ranges
 # Available: 8 am to 10 am, 11 am to 12 pm, and 1 pm to 12 am
-# available_hours = list(range(8, 10)) + list(range(11, 12)) + list(range(13, 24))
-available_hours = list(range(6, 18))
+available_hours = list(range(8, 10)) + list(range(11, 12)) + list(range(13, 24))
 model.time_slots = Set(initialize=available_hours)
 
 # Decision variables: start time for each task
-model.start_time = Var(model.tasks, within=model.time_slots)
+model.start_time = Var(model.tasks, within=model.time_slots, bounds=(8, 23))
 
 # Objective: Maximize total reward
 def obj_rule(model):
@@ -49,13 +48,17 @@ def end_of_day_rule(model, t):
 
 model.end_of_day = Constraint(model.tasks, rule=end_of_day_rule)
 
-# Constraint: Task dependencies
-model.dependencies = ConstraintList()
+# Prerequisite tasks for each task
+task_reqs = {1: [5], 2: [], 3: [], 4: [], 5: []}
 
-for t in model.tasks:
-    if "dependencies" in tasks_data[t]:
-        for dep in tasks_data[t]['dependencies']:
-            model.dependencies.add(model.start_time[t] >= model.start_time[dep] + tasks_data[dep]['duration'] * model.schedule[dep])
+# Constraint: Prerequisite tasks must be scheduled before the current task
+def prereq_rule(model, t):
+    if task_reqs[t] == []:
+        return Constraint.Skip
+    print(f"Task {t} requires {task_reqs[t]}")
+    return sum(model.schedule[req] for req in task_reqs[t]) >= model.schedule[t]
+
+model.prereq = Constraint(model.tasks, rule=prereq_rule)
 
 # Solve the model using the CBC solver
 solver = SolverFactory('cbc')

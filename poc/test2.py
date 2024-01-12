@@ -3,11 +3,11 @@ import pyomo.environ as pyo
 
 # Example tasks data (task_id, duration, reward)
 tasks_data = {
-    1: {'duration': 3, 'reward': 10, 'dependencies': [5]},
+    1: {'duration': 4, 'reward': 10},
     2: {'duration': 3, 'reward': 15},
     3: {'duration': 5, 'reward': 7},
     4: {'duration': 7, 'reward': 7},
-    5: {'duration': 1, 'reward': 20},
+    5: {'duration': 3, 'reward': 20},
 }
 
 # Define the model
@@ -21,18 +21,20 @@ model.schedule = Var(model.tasks, within=pyo.Binary)
 
 # Define available hours, excluding unavailable time ranges
 # Available: 8 am to 10 am, 11 am to 12 pm, and 1 pm to 12 am
-# available_hours = list(range(8, 10)) + list(range(11, 12)) + list(range(13, 24))
-available_hours = list(range(6, 18))
+available_hours = list(range(8, 10)) + list(range(11, 12)) + list(range(13, 24))
 model.time_slots = Set(initialize=available_hours)
 
 # Decision variables: start time for each task
-model.start_time = Var(model.tasks, within=model.time_slots)
+model.start_time = Var(model.tasks, within=model.time_slots, bounds=(8, 23))
+
 
 # Objective: Maximize total reward
 def obj_rule(model):
     return sum(model.schedule[t] * tasks_data[t]['reward'] for t in model.tasks)
 
+
 model.objective = Objective(rule=obj_rule, sense=maximize)
+
 
 # Constraint: No overlapping tasks
 def no_overlap_rule(model, t1, t2):
@@ -41,21 +43,29 @@ def no_overlap_rule(model, t1, t2):
     # Task t2 can't start if t1 is scheduled and it overlaps with t1's duration
     return model.start_time[t2] >= model.start_time[t1] + tasks_data[t1]['duration'] * model.schedule[t1]
 
+
 model.no_overlap = Constraint(model.tasks, model.tasks, rule=no_overlap_rule)
+
 
 # Constraint: Task must not finish after the end of the day (12 am)
 def end_of_day_rule(model, t):
     return model.start_time[t] + tasks_data[t]['duration'] * model.schedule[t] <= 24
 
+
 model.end_of_day = Constraint(model.tasks, rule=end_of_day_rule)
 
-# Constraint: Task dependencies
-model.dependencies = ConstraintList()
+model.dependencies = {1: [5], 4: [3]}  # Task 2 depends on 1, task 4 depends on 3
 
-for t in model.tasks:
-    if "dependencies" in tasks_data[t]:
-        for dep in tasks_data[t]['dependencies']:
-            model.dependencies.add(model.start_time[t] >= model.start_time[dep] + tasks_data[dep]['duration'] * model.schedule[dep])
+
+def dependency_rule(model, t1, t2):
+    # if t2 in model.dependencies[t1]:
+    if t1 in model.dependencies.keys() and t2 in model.dependencies[t1]:
+        # If t1 is scheduled, t2 must start after t1 ends
+        return model.start_time[t2] >= model.start_time[t1] + tasks_data[t1]['duration'] * model.schedule[t1]
+    return Constraint.Skip
+
+
+model.dependencies = Constraint(model.tasks, model.tasks, rule=dependency_rule)
 
 # Solve the model using the CBC solver
 solver = SolverFactory('cbc')
@@ -71,4 +81,3 @@ for t in model.tasks:
 
 # Total reward
 print("Total Reward:", model.objective())
-
